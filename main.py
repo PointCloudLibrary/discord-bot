@@ -376,7 +376,7 @@ def main():
     args, _ = get_args()
     if not (args.channel_id and args.issues > 0):
         print("Entering interactive mode")
-        client.run(config["discord_token")
+        client.run(config["discord_token"])
         return
 
     print("Running in one-shot mode."
