@@ -376,7 +376,7 @@ def main():
     args, _ = get_args()
 
     global config
-    config = read_config("config.json")
+    config = read_config(args.config)
     print(f"Setting bot for {config['repo']}")
 
     gh_token = config.get("github_token", None)
