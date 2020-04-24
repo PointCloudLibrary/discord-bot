@@ -325,9 +325,9 @@ Retrieves N least-recently-updated PR in the review queue'''
         author = message.author
         if command == "q":
             author = None
-        elif type(author) is discord.Member:
+        elif isinstance(author, discord.Member):
             author = author.nick or author.name
-        elif type(author) is discord.User:
+        elif isinstance(author, discord.User):
             author = author.name
 
         await review_q(channel, number_of_issues, author)
@@ -335,23 +335,22 @@ Retrieves N least-recently-updated PR in the review queue'''
     return
 
 
-def read_secret_token(filename):
-    with open(filename, "r") as f:
-        return f.readline().strip()
-
 def read_config(filename):
     with open(filename, "r") as f:
         return json.load(f)
+
 
 async def oneshot(channel_id, n):
     await client.wait_until_ready()
     await give_random(client.get_channel(channel_id), n)
     await client.close()
 
+
 def readable_file(string):
     if path.isfile(string):
         return string
-    raise argparse.ArgumentTypeError(f"'{string}' is not a valid readable file")
+    raise argparse.ArgumentTypeError(
+        f"'{string}' is not a valid readable file")
 
 
 def get_args():
@@ -391,7 +390,7 @@ def main():
     print("Running in one-shot mode."
           f" Will send {args.issues} messages to requested channel")
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(client.login(read_secret_token(".discord-token")))
+    loop.run_until_complete(client.login(config["discord_token"]))
     loop.create_task(oneshot(args.channel_id, args.issues))
     loop.run_until_complete(client.connect())
 
