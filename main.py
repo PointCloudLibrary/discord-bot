@@ -348,6 +348,11 @@ async def oneshot(channel_id, n):
     await give_random(client.get_channel(channel_id), n)
     await client.close()
 
+def readable_file(string):
+    if path.isfile(string):
+        return string
+    raise argparse.ArgumentTypeError(f"'{string}' is not a valid readable file")
+
 
 def get_args():
     p = argparse.ArgumentParser("GitHub Issue Slot Machine",
@@ -362,16 +367,13 @@ If a channel ID is provided, it'll send N issues and exit
                    help="Channel ID (numerical) to send messages to")
     p.add_argument("--issues", metavar="N", default=5, type=int,
                    help="Number of issues to send in one-shot mode, default: 5")
-    p.add_argument("--config", type=str, default="config.json",
+    p.add_argument("--config", type=readable_file, default="config.json",
                    help="location of config file")
     return p.parse_known_args()
 
 
 def main():
     args, _ = get_args()
-    if not path.isfile(args.config):
-        print(f"Config file not found: {args.config}")
-        return
 
     global config
     config = read_config("config.json")
