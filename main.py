@@ -44,6 +44,7 @@ from datetime import datetime
 import discord
 import itertools
 import json
+import os.path as path
 import random
 import time
 from urllib.parse import quote_plus
@@ -361,10 +362,17 @@ If a channel ID is provided, it'll send N issues and exit
                    help="Channel ID (numerical) to send messages to")
     p.add_argument("--issues", metavar="N", default=5, type=int,
                    help="Number of issues to send in one-shot mode, default: 5")
+    p.add_argument("--config", type=str, default="config.json",
+                   help="location of config file")
     return p.parse_known_args()
 
 
 def main():
+    args, _ = get_args()
+    if not path.isfile(args.config):
+        print(f"Config file not found: {args.config}")
+        return
+
     global config
     config = read_config("config.json")
     print(f"Setting bot for {config['repo']}")
@@ -373,7 +381,6 @@ def main():
     global gh_auth
     gh_auth = {"Authorization": f"token {gh_token}"} if gh_token else None
 
-    args, _ = get_args()
     if not (args.channel_id and args.issues > 0):
         print("Entering interactive mode")
         client.run(config["discord_token"])
