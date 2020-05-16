@@ -56,16 +56,17 @@ gh_auth = None
 
 async def github_ratelimiter(headers, error_channel):
     # If this is the last message before rate-limiting kicks in
-    if int(headers['X-RateLimit-Remaining']) == 1:
-        epoch_sec = int(headers['X-RateLimit-Reset'])
+    if int(headers["X-RateLimit-Remaining"]) == 1:
+        epoch_sec = int(headers["X-RateLimit-Reset"])
         delay = datetime.fromtimestamp(epoch_sec) - datetime.now()
         # adding 1 to ensure we wait till after the rate-limit reset
         sleep_time = delay.total_seconds() + 1
         if sleep_time > 61:  # Waiting more than a minute is not kinda-sorta ok
-            await error_channel("API Request timed out",
-                                f"Try again after {sleep_time} seconds")
+            await error_channel(
+                "API Request timed out", f"Try again after {sleep_time} seconds"
+            )
             return sleep_time
-        print(f'Need to sleep for {sleep_time}')
+        print(f"Need to sleep for {sleep_time}")
         await asyncio.sleep(sleep_time)
     return 0
 
@@ -77,6 +78,7 @@ def error_handler(channel):
         error.title = title
         error.description = description
         await channel.send(embed=error)
+
     return handler
 
 
@@ -84,29 +86,37 @@ async def default_error_handler(title, description):
     return True
 
 
-async def get_issues(repository, closed=False, pull_request=False,
-                     include_labels=[], exclude_labels=[],
-                     sort='created', ascending_order=False,
-                     error_channel=default_error_handler):
-    closed = 'closed' if closed else 'open'
-    pull_request = 'pr' if pull_request else 'issue'
+async def get_issues(
+    repository,
+    closed=False,
+    pull_request=False,
+    include_labels=[],
+    exclude_labels=[],
+    sort="created",
+    ascending_order=False,
+    error_channel=default_error_handler,
+):
+    closed = "closed" if closed else "open"
+    pull_request = "pr" if pull_request else "issue"
     print(f"Getting list of {closed} {pull_request} from GitHub")
-    def gh_encode(x): return quote_plus(x, safe='"')
+
+    def gh_encode(x):
+        return quote_plus(x, safe='"')
 
     api_url = "https://api.github.com/search/issues?"
     # All query items are list of strings, which will be flattened later
     excluded_labels = [f'-label:"{gh_encode(x)}"' for x in exclude_labels]
     included_labels = [f'label:"{gh_encode(x)}"' for x in include_labels]
-    issue = [f'is:{pull_request}']
+    issue = [f"is:{pull_request}"]
     repo = [f"repo:{repository}"]
     status = [f"is:{closed}"]
     query = [issue, repo, status, excluded_labels, included_labels]
 
-    query_string = 'q=' + '+'.join(itertools.chain.from_iterable(query))
-    sort_string = f'sort={sort}'
-    order_string = 'order=' + ('asc' if ascending_order else 'desc')
+    query_string = "q=" + "+".join(itertools.chain.from_iterable(query))
+    sort_string = f"sort={sort}"
+    order_string = "order=" + ("asc" if ascending_order else "desc")
 
-    query_url = api_url + '&'.join([query_string, sort_string, order_string])
+    query_url = api_url + "&".join([query_string, sort_string, order_string])
 
     print(query_url)
 
@@ -117,11 +127,14 @@ async def get_issues(repository, closed=False, pull_request=False,
         search_url = f"{query_url}&page={page}&per_page=100"
         async with aiohttp.ClientSession() as session:
             try:
-                response = await session.get(search_url, raise_for_status=True,
-                                             headers=gh_auth)
+                response = await session.get(
+                    search_url, raise_for_status=True, headers=gh_auth
+                )
             except TimeoutError:
-                await error_channel("API Request timed out",
-                                    "Please check https://www.githubstatus.com/")
+                await error_channel(
+                    "API Request timed out",
+                    "Please check https://www.githubstatus.com/",
+                )
                 break
             async with response:
                 data = await response.json()
@@ -144,12 +157,14 @@ async def get_pr_details(issues, error_channel=lambda title, desc: True):
     async for issue in issues:
         async with aiohttp.ClientSession() as session:
             try:
-                response = await session.get(issue['pull_request']['url'],
-                                             raise_for_status=True,
-                                             headers=gh_auth)
+                response = await session.get(
+                    issue["pull_request"]["url"], raise_for_status=True, headers=gh_auth
+                )
             except TimeoutError:
-                await error_channel("API Request timed out",
-                                    "Please check https://www.githubstatus.com/")
+                await error_channel(
+                    "API Request timed out",
+                    "Please check https://www.githubstatus.com/",
+                )
                 break
             async with response:
                 pr_data = await response.json()
@@ -161,13 +176,13 @@ async def get_pr_details(issues, error_channel=lambda title, desc: True):
 
 
 async def pr_with_pending_review(pr_list, user):
-    '''
+    """
     Generates PR which need to be reviewed by the user
-    '''
+    """
     print(f"Filtering for @{user}")
     async for pr in pr_list:
-        for reviewer in pr['requested_reviewers']:
-            if reviewer['login'] == user:
+        for reviewer in pr["requested_reviewers"]:
+            if reviewer["login"] == user:
                 yield pr
 
 
@@ -177,9 +192,11 @@ def beautify_issues(github_issue_list):
 
 
 def compose_message(issues):
-    issue_data = [f'**{i+1}.** {issue["title"]}\n  {issue["html_url"]}'
-                  for i, issue in enumerate(issues)]
-    return '\n'.join(issue_data)
+    issue_data = [
+        f'**{i+1}.** {issue["title"]}\n  {issue["html_url"]}'
+        for i, issue in enumerate(issues)
+    ]
+    return "\n".join(issue_data)
 
 
 async def set_playing(status):
@@ -195,12 +212,17 @@ async def give_random(channel, number_of_issues):
     4. get issues till max(generated_list)
     5. return them
     """
-    await set_playing('Finding Issues')
+    await set_playing("Finding Issues")
     error_channel = error_handler(channel)
     async with channel.typing():
-        issues = [x async for x in get_issues(config["repo"],
-                                              exclude_labels=['status: stale'],
-                                              error_channel=error_channel)]
+        issues = [
+            x
+            async for x in get_issues(
+                config["repo"],
+                exclude_labels=["status: stale"],
+                error_channel=error_channel,
+            )
+        ]
         reply = discord.Embed(color=discord.Color.purple())
         reply.title = f"{number_of_issues} random picks out of {len(issues)}:"
 
@@ -209,18 +231,22 @@ async def give_random(channel, number_of_issues):
         if len(chosen_issues) < number_of_issues:
             reply.set_footer(text="There wasn't enough...")
     await channel.send(embed=reply)
-    await set_playing('The Waiting Game')
+    await set_playing("The Waiting Game")
 
 
 async def review_q(channel, number_of_issues, author=None):
-    await set_playing('On The Cue')
+    await set_playing("On The Cue")
     error_channel = error_handler(channel)
     async with channel.typing():
-        issues = get_issues(config["repo"], pull_request=True,
-                            exclude_labels=['status: stale'],
-                            include_labels=['needs: code review'],
-                            sort='updated', ascending_order=True,
-                            error_channel=error_channel)
+        issues = get_issues(
+            config["repo"],
+            pull_request=True,
+            exclude_labels=["status: stale"],
+            include_labels=["needs: code review"],
+            sort="updated",
+            ascending_order=True,
+            error_channel=error_channel,
+        )
         reply = discord.Embed(color=discord.Color.purple())
 
         if author:
@@ -245,12 +271,12 @@ async def review_q(channel, number_of_issues, author=None):
         if len(chosen_issues) < number_of_issues:
             reply.set_footer(text="There weren't enough...")
     await channel.send(embed=reply)
-    await set_playing('The Waiting Game')
+    await set_playing("The Waiting Game")
 
 
 @client.event
 async def on_ready():
-    await set_playing('The Waiting Game')
+    await set_playing("The Waiting Game")
 
 
 @client.event
@@ -263,26 +289,26 @@ async def on_message(message):
         return
     channel = message.channel
     data = message.content
-    if len(data) == 0 or data[0] != '!':
+    if len(data) == 0 or data[0] != "!":
         return
     # split message into command and arguments
-    query = data.strip().split(' ')
+    query = data.strip().split(" ")
     command = query[0][1:]
     args = query[1:]
 
     reply = discord.Embed(color=discord.Color.purple())
     reply.description = "Talking to me? Use `!what` to know more."
 
-    if command == 'what':
+    if command == "what":
         reply.title = "Command list for GitHub Helper"
-        reply.description = '''`!rand <N>`
+        reply.description = """`!rand <N>`
 Retrieves N random open, non-stale issues
 
 `!review <N>`
 Retrieves N least-recently-updated PR awaiting your review
 
 `!q <N>`
-Retrieves N least-recently-updated PR in the review queue'''
+Retrieves N least-recently-updated PR in the review queue"""
         await channel.send(embed=reply)
         return
 
@@ -295,8 +321,9 @@ Retrieves N least-recently-updated PR in the review queue'''
             if number_of_issues < 1:
                 raise ValueError("Positive integer needed")
         except ValueError:
-            reply.description = "I can't give you un-natural issues." + \
-                " I'm not a monster!!"
+            reply.description = (
+                "I can't give you un-natural issues." + " I'm not a monster!!"
+            )
             await channel.send(embed=reply)
             return
         if number_of_issues > 10:
@@ -349,25 +376,36 @@ async def oneshot(channel_id, n):
 def readable_file(string):
     if path.isfile(string):
         return string
-    raise argparse.ArgumentTypeError(
-        f"'{string}' is not a valid readable file")
+    raise argparse.ArgumentTypeError(f"'{string}' is not a valid readable file")
 
 
 def get_args():
-    p = argparse.ArgumentParser("GitHub Issue Slot Machine",
-                                description="""[Discord bot]
+    p = argparse.ArgumentParser(
+        "GitHub Issue Slot Machine",
+        description="""[Discord bot]
 It helps to discover random open, non-stale issues.
 By default, it'll enter interactive mode and return N issues when prompted by:
 `!give N`
 where N is a number less than open issues.
 If a channel ID is provided, it'll send N issues and exit
-""")
-    p.add_argument("--channel_id", type=int,
-                   help="Channel ID (numerical) to send messages to")
-    p.add_argument("--issues", metavar="N", default=5, type=int,
-                   help="Number of issues to send in one-shot mode, default: 5")
-    p.add_argument("--config", type=readable_file, default="config.json",
-                   help="location of config file")
+""",
+    )
+    p.add_argument(
+        "--channel_id", type=int, help="Channel ID (numerical) to send messages to"
+    )
+    p.add_argument(
+        "--issues",
+        metavar="N",
+        default=5,
+        type=int,
+        help="Number of issues to send in one-shot mode, default: 5",
+    )
+    p.add_argument(
+        "--config",
+        type=readable_file,
+        default="config.json",
+        help="location of config file",
+    )
     return p.parse_known_args()
 
 
@@ -387,8 +425,10 @@ def main():
         client.run(config["discord_token"])
         return
 
-    print("Running in one-shot mode."
-          f" Will send {args.issues} messages to requested channel")
+    print(
+        "Running in one-shot mode."
+        f" Will send {args.issues} messages to requested channel"
+    )
     loop = asyncio.get_event_loop()
     loop.run_until_complete(client.login(config["discord_token"]))
     loop.create_task(oneshot(args.channel_id, args.issues))
