@@ -42,6 +42,7 @@ import argparse
 import asyncio
 from datetime import datetime
 import discord
+from discord.ext import commands
 import itertools
 import json
 import os.path as path
@@ -49,7 +50,14 @@ import random
 import time
 from urllib.parse import quote_plus
 
-client = discord.Client()
+
+def read_config(filename):
+    with open(filename, "r") as f:
+        return json.load(f)
+
+
+bot = commands.Bot(command_prefix="!")
+command_config = read_config("command_config.json")
 config = {}
 gh_auth = None
 
@@ -87,7 +95,7 @@ async def default_error_handler(title, description):
 
 
 async def get_issues(
-    repository,
+    repository="PointCloudLibrary/pcl",
     closed=False,
     pull_request=False,
     include_labels=[],
@@ -154,7 +162,7 @@ async def get_issues(
 async def get_pr_details(issues, error_channel=lambda title, desc: True):
     print("Getting more details about the PRs")
     counter = 0
-    async for issue in issues:
+    for issue in issues:
         async with aiohttp.ClientSession() as session:
             try:
                 response = await session.get(
@@ -200,10 +208,55 @@ def compose_message(issues):
 
 
 async def set_playing(status):
-    await client.change_presence(activity=discord.Game(name=status))
+    await bot.change_presence(activity=discord.Game(name=status))
 
 
-async def give_random(channel, number_of_issues):
+@bot.event
+async def on_ready():
+    await set_playing("The Waiting Game")
+
+
+async def check_number_of_issues(number_of_issues, error_channel=default_error_handler):
+    if number_of_issues < 1:
+        number_of_issues = 10
+        await error_channel(
+            "Woah, there!", "I can't give you un-natural issues. I'm not a monster!!",
+        )
+    if number_of_issues > 10:
+        number_of_issues = 10
+        await error_channel(
+            "Woah, there!", "Let's curb that enthusiasm.. just a little"
+        )
+    return number_of_issues
+
+
+async def check_pull_request(noun, error_channel=default_error_handler):
+    pull_request = False
+    if noun in ["issue", "issues", "ISSUE", "ISSUES"]:
+        pull_request = False
+    elif noun in ["pr", "prs", "PR", "PRs", "PRS"]:
+        pull_request = True
+    else:
+        await error_channel("", "Insufficient info, defaulting to issues..")
+    return pull_request
+
+
+async def check_author(ctx, noun, error_channel=default_error_handler):
+    author = None
+    if noun in ["issue", "issues", "ISSUE", "ISSUES"]:
+        await error_channel(
+            "Woah, there!", "Sorry, but we don't review issues here. Up for some PRs?"
+        )
+    if noun is None or noun not in ["all", "ALL"]:
+        author = ctx.message.author
+        if isinstance(author, discord.Member):
+            author = author.nick or author.name
+        elif isinstance(author, discord.User):
+            author = author.name
+    return author
+
+
+async def choose_rand(issues, number_of_issues):
     """
     @TODO: improve algorithm to save queries
     1. get first batch of github_max (100), find total number
@@ -212,165 +265,151 @@ async def give_random(channel, number_of_issues):
     4. get issues till max(generated_list)
     5. return them
     """
-    await set_playing("Finding Issues")
-    error_channel = error_handler(channel)
-    async with channel.typing():
-        issues = [
-            x
-            async for x in get_issues(
-                config["repo"],
-                exclude_labels=["status: stale"],
-                error_channel=error_channel,
-            )
+    chosen_issues = random.choices(issues, k=number_of_issues)
+    title = f"{number_of_issues} random picks out of {len(issues)}:"
+
+    return chosen_issues, title
+
+
+async def choose_review(issues, number_of_issues, author):
+    chosen_issues = []
+    if author:
+        issues = pr_with_pending_review(get_pr_details(issues), author)
+        # since async islice doesn't exist
+        async for issue in issues:
+            chosen_issues.append(issue)
+            if len(chosen_issues) == number_of_issues:
+                break
+    else:
+        chosen_issues = issues[:number_of_issues]
+
+    selection = f"for @{author}" if author else f"in review queue"
+    title = f"Oldest {number_of_issues} PR(s) {selection}:"
+
+    return chosen_issues, title
+
+
+async def choose_feedback(issues, number_of_issues, pull_request):
+    chosen_issues = issues[:number_of_issues]
+
+    kind = "PR(s)" if pull_request else "issue(s)"
+    title = f"Oldest {number_of_issues} {kind} in feedback queue:"
+
+    return chosen_issues, title
+
+
+for name, conf in command_config.items():
+
+    # name=name and conf=conf used to prevent late binding
+    @bot.command(name=name)
+    async def command_function(
+        ctx, number_of_issues: int, noun=None, channel=None, name=name, conf=conf
+    ):
+        reply = discord.Embed(color=discord.Color.purple())
+        if channel is None:
+            channel = ctx.channel
+        error_channel = error_handler(channel)
+
+        check_order = [
+            check_number_of_issues(
+                number_of_issues=number_of_issues, error_channel=error_channel
+            ),
+            check_pull_request(noun=noun, error_channel=error_channel),
+            check_author(ctx=ctx, noun=noun, error_channel=error_channel),
         ]
-        reply = discord.Embed(color=discord.Color.purple())
-        reply.title = f"{number_of_issues} random picks out of {len(issues)}:"
 
-        chosen_issues = random.choices(issues, k=number_of_issues)
-        reply.description = compose_message(beautify_issues(chosen_issues))
-        if len(chosen_issues) < number_of_issues:
-            reply.set_footer(text="There wasn't enough...")
-    await channel.send(embed=reply)
-    await set_playing("The Waiting Game")
+        # command specific checks
+        if name in ["rand", "fq"]:
+            number_of_issues = await check_order[0]
+            pull_request = await check_order[1]
+            author = None
+        if name in ["rq"]:
+            number_of_issues = await check_order[0]
+            pull_request = True
+            author = await check_order[2]
 
+        await set_playing("On The Cue")
+        async with channel.typing():
+            issues = [
+                x
+                async for x in get_issues(
+                    **conf, pull_request=pull_request, error_channel=error_channel
+                )
+            ]
 
-async def review_q(channel, number_of_issues, author=None):
-    await set_playing("On The Cue")
-    error_channel = error_handler(channel)
-    async with channel.typing():
-        issues = get_issues(
-            config["repo"],
-            pull_request=True,
-            exclude_labels=["status: stale"],
-            include_labels=["needs: code review"],
-            sort="updated",
-            ascending_order=True,
-            error_channel=error_channel,
-        )
-        reply = discord.Embed(color=discord.Color.purple())
+            choose_for_commands = {
+                "rand": choose_rand(issues=issues, number_of_issues=number_of_issues),
+                "rq": choose_review(
+                    issues=issues, number_of_issues=number_of_issues, author=author
+                ),
+                "fq": choose_feedback(
+                    issues=issues,
+                    number_of_issues=number_of_issues,
+                    pull_request=pull_request,
+                ),
+            }
+            chosen_issues, reply.title = await choose_for_commands[name]
 
-        if author:
-            title_suffix = f" waiting @{author}'s review:"
-            issues = pr_with_pending_review(get_pr_details(issues), author)
-            chosen_issues = []
-            # since async islice doesn't exist
-            async for issue in issues:
-                chosen_issues.append(issue)
-                if len(chosen_issues) == number_of_issues:
-                    break
-        else:
-            title_suffix = " in review queue:"
-            chosen_issues = []
-            async for issue in issues:
-                chosen_issues.append(issue)
-                if len(chosen_issues) == number_of_issues:
-                    break
-
-        reply.title = f"Oldest {number_of_issues} PR" + title_suffix
-        reply.description = compose_message(beautify_issues(chosen_issues))
-        if len(chosen_issues) < number_of_issues:
-            reply.set_footer(text="There weren't enough...")
-    await channel.send(embed=reply)
-    await set_playing("The Waiting Game")
+            reply.description = compose_message(beautify_issues(chosen_issues))
+            if len(chosen_issues) < number_of_issues:
+                reply.set_footer(text="There weren't enough...")
+        await channel.send(embed=reply)
+        await set_playing("The Waiting Game")
 
 
-@client.event
-async def on_ready():
-    await set_playing("The Waiting Game")
+@bot.command(name="what")
+async def what_cmd(ctx):
+    reply = discord.Embed(color=discord.Color.purple())
+    reply.title = "Command list for GitHub Helper"
+    reply.description = """`!rand <N> issue/pr`
+Retrieves N random open, non-stale issue(s)/PR(s)
+
+`!rq <N> [all]`
+Retrieves least-recently-updated PR(s) and filters those awaiting a review from you (default) or anyone (in presence of all)
+
+`!fq <N> issue/pr`
+Retrieves N least-recently-updated issue(s)/PR(s) in the feedback queue"""
+    await ctx.channel.send(embed=reply)
 
 
-@client.event
-async def on_message(message):
-    # we do not want the bot to reply to itself
-    if message.author.id == client.user.id:
-        return
-    # Don't reply to bots
-    if message.author.bot:
-        return
-    channel = message.channel
-    data = message.content
-    if len(data) == 0 or data[0] != "!":
-        return
-    # split message into command and arguments
-    query = data.strip().split(" ")
-    command = query[0][1:]
-    args = query[1:]
-
+@bot.event
+async def on_command_error(ctx, error):
     reply = discord.Embed(color=discord.Color.purple())
     reply.description = "Talking to me? Use `!what` to know more."
-
-    if command == "what":
-        reply.title = "Command list for GitHub Helper"
-        reply.description = """`!rand <N>`
-Retrieves N random open, non-stale issues
-
-`!review <N>`
-Retrieves N least-recently-updated PR awaiting your review
-
-`!q <N>`
-Retrieves N least-recently-updated PR in the review queue"""
-        await channel.send(embed=reply)
-        return
-
-    elif command == "rand":
-        if len(args) != 1:
-            await channel.send(embed=reply)
-            return
-        try:
-            number_of_issues = int(args[0].strip())
-            if number_of_issues < 1:
-                raise ValueError("Positive integer needed")
-        except ValueError:
-            reply.description = (
-                "I can't give you un-natural issues." + " I'm not a monster!!"
-            )
-            await channel.send(embed=reply)
-            return
-        if number_of_issues > 10:
-            number_of_issues = 10
-            reply.description = "Let's curb that enthusiasm.. just a little"
-            await channel.send(embed=reply)
-        await give_random(channel, number_of_issues)
-        return
-
-    elif command == "q" or command == "review":
-        if len(args) != 1:
-            await channel.send(embed=reply)
-            return
-        try:
-            number_of_issues = int(args[0].strip())
-            if number_of_issues < 1:
-                raise ValueError("Positive integer needed")
-        except ValueError:
-            await channel.send("This queue is 100% natural. Check your orders")
-            return
-        if number_of_issues > 10:
-            number_of_issues = 10
-            reply.description = "Let's curb that enthusiasm.. just a little"
-            await channel.send(embed=reply)
-
-        author = message.author
-        if command == "q":
-            author = None
-        elif isinstance(author, discord.Member):
-            author = author.nick or author.name
-        elif isinstance(author, discord.User):
-            author = author.name
-
-        await review_q(channel, number_of_issues, author)
-        return
-    return
+    if (
+        isinstance(error, discord.ext.commands.errors.BadArgument)
+        or isinstance(error, discord.ext.commands.errors.MissingRequiredArgument)
+        or isinstance(error, discord.ext.commands.errors.CommandNotFound)
+        or isinstance(error, discord.ext.commands.errors.DiscordException)
+    ):
+        await ctx.channel.send(embed=reply)
 
 
-def read_config(filename):
-    with open(filename, "r") as f:
-        return json.load(f)
+# deprecated commands
+for name in ["review", "q"]:
+
+    @bot.command(name=name)
+    async def deprecated_cmd(ctx):
+        reply = discord.Embed()
+        reply.title = "Deprecated command"
+        reply.description = "Use `!what` to know more."
+        reply.set_image(
+            url="https://media.giphy.com/media/kegHkRsheJk3fjOg3D/giphy.gif"
+        )
+        await ctx.channel.send(embed=reply)
 
 
 async def oneshot(channel_id, n):
-    await client.wait_until_ready()
-    await give_random(client.get_channel(channel_id), n)
-    await client.close()
+    await bot.wait_until_ready()
+    await command_function(
+        ctx=None,
+        number_of_issues=n,
+        noun="issue",
+        channel=bot.get_channel(channel_id),
+        name="rand",
+        conf=command_config["rand"],
+    )
+    await bot.close()
 
 
 def readable_file(string):
@@ -422,7 +461,7 @@ def main():
 
     if not (args.channel_id and args.issues > 0):
         print("Entering interactive mode")
-        client.run(config["discord_token"])
+        bot.run(config["discord_token"])
         return
 
     print(
@@ -430,9 +469,9 @@ def main():
         f" Will send {args.issues} messages to requested channel"
     )
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(client.login(config["discord_token"]))
+    loop.run_until_complete(bot.login(config["discord_token"]))
     loop.create_task(oneshot(args.channel_id, args.issues))
-    loop.run_until_complete(client.connect())
+    loop.run_until_complete(bot.connect())
 
 
 if __name__ == "__main__":
