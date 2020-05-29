@@ -2,19 +2,19 @@
     "rand": {
         "include_labels": [],
         "exclude_labels": ["status: stale"],
-        "sort": "'created'",
+        "sort": "created",
         "ascending_order": "False"
     },
     "rq": {
         "include_labels": ["needs: code review"],
         "exclude_labels": ["status: stale"],
-        "sort": "'updated'",
+        "sort": "updated",
         "ascending_order": "True"
     },
     "fq": {
         "include_labels": ["needs: feedback"],
         "exclude_labels": ["status: stale"],
-        "sort": "'updated'",
+        "sort": "updated",
         "ascending_order": "True"
     }
 }
