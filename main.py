@@ -299,7 +299,6 @@ async def choose_feedback(issues, number_of_issues, pull_request):
 
 
 for name, conf in command_config.items():
-
     # name=name and conf=conf used to prevent late binding
     @bot.command(name=name)
     async def command_function(
@@ -310,23 +309,31 @@ for name, conf in command_config.items():
             channel = ctx.channel
         error_channel = error_handler(channel)
 
+        def delay(x, *args, **kwargs):
+            async def actual_waiter():
+                return await x(*args, **kwargs)
+
+            return actual_waiter
+
         check_order = [
-            check_number_of_issues(
-                number_of_issues=number_of_issues, error_channel=error_channel
+            delay(
+                check_number_of_issues,
+                number_of_issues=number_of_issues,
+                error_channel=error_channel,
             ),
-            check_pull_request(noun=noun, error_channel=error_channel),
-            check_author(ctx=ctx, noun=noun, error_channel=error_channel),
+            delay(check_pull_request, noun=noun, error_channel=error_channel),
+            delay(check_author, ctx=ctx, noun=noun, error_channel=error_channel),
         ]
 
         # command specific checks
         if name in ["rand", "fq"]:
-            number_of_issues = await check_order[0]
-            pull_request = await check_order[1]
+            number_of_issues = await check_order[0]()
+            pull_request = await check_order[1]()
             author = None
         if name in ["rq"]:
-            number_of_issues = await check_order[0]
+            number_of_issues = await check_order[0]()
             pull_request = True
-            author = await check_order[2]
+            author = await check_order[2]()
 
         await set_playing("On The Cue")
         async with channel.typing():
@@ -338,17 +345,23 @@ for name, conf in command_config.items():
             ]
 
             choose_for_commands = {
-                "rand": choose_rand(issues=issues, number_of_issues=number_of_issues),
-                "rq": choose_review(
-                    issues=issues, number_of_issues=number_of_issues, author=author
+                "rand": delay(
+                    choose_rand, issues=issues, number_of_issues=number_of_issues
                 ),
-                "fq": choose_feedback(
+                "rq": delay(
+                    choose_review,
+                    issues=issues,
+                    number_of_issues=number_of_issues,
+                    author=author,
+                ),
+                "fq": delay(
+                    choose_feedback,
                     issues=issues,
                     number_of_issues=number_of_issues,
                     pull_request=pull_request,
                 ),
             }
-            chosen_issues, reply.title = await choose_for_commands[name]
+            chosen_issues, reply.title = await choose_for_commands[name]()
 
             reply.description = compose_message(beautify_issues(chosen_issues))
             if len(chosen_issues) < number_of_issues:
