@@ -1,0 +1,37 @@
+# This is not a CI, just a CD
+trigger: none
+pr: none
+
+pool:
+  vmImage: 'ubuntu-latest'
+strategy:
+  matrix:
+    Python37:
+      python.version: '3.7'
+
+schedules:
+- cron: "0 0 * * *"
+  displayName: "Everyday midnight trigger"
+  branches:
+    include:
+    - master
+
+steps:
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: '$(python.version)'
+  displayName: 'Use Python $(python.version)'
+
+- script: |
+    python -m pip install --upgrade pip
+    pip install -r requirements.txt
+  displayName: 'Install dependencies'
+- task: DownloadSecureFile@1
+  name: "discord_config"
+  displayName: 'Download login tokens for the bot'
+  inputs:
+    secureFile: 'config.json'
+
+- script: |
+    python main.py --channel_id $(Channel ID) --config $(discord_config.secureFilePath)
+  displayName: 'Run trigger'
